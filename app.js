@@ -4,7 +4,13 @@ import {
   getDatabase, ref, set, push, onValue, onChildAdded, onDisconnect,
   serverTimestamp, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
-import { FIREBASE_CONFIG } from "./config.js";
+// config.js is a plain script that declares `firebaseConfig` exactly as Firebase shows it
+/* global firebaseConfig */
+const FIREBASE_CONFIG = (() => {
+  const c = typeof firebaseConfig !== "undefined" ? firebaseConfig : null;
+  if (c && !c.databaseURL && c.projectId) c.databaseURL = `https://${c.projectId}-default-rtdb.europe-west1.firebasedatabase.app`;
+  return c;
+})();
 
 const $ = s => document.querySelector(s);
 const CODE_RE = /^[a-z0-9-]{3,32}$/;

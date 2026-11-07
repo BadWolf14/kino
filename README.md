@@ -38,23 +38,14 @@
 
 **Build → Authentication → Get started → Sign-in method → Anonymous → Enable → Save.**
 
-## Шаг 4. Скопируйте ключи в `config.js`
+## Шаг 4. Вставьте настройки в `config.js`
 
 1. Шестерёнка вверху слева → **Project settings**.
 2. Внизу, в блоке **Your apps**, нажмите значок **`</>`** (Web), введите любое имя, **Firebase Hosting не отмечайте** → **Register app**.
-3. Появится код с `const firebaseConfig = { ... }`. Перенесите значения в `config.js`:
+3. В блоке **SDK setup and configuration** выберите **Config** и скопируйте весь блок `const firebaseConfig = { ... };`.
+4. Откройте `config.js`, удалите всё и вставьте скопированное как есть. Больше ничего менять не нужно.
 
-```js
-export const FIREBASE_CONFIG = {
-  apiKey: "AIza...",
-  authDomain: "kinoseans.firebaseapp.com",
-  databaseURL: "https://kinoseans-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "kinoseans",
-  appId: "1:1234567890:web:abc123"
-};
-```
-
-Если в показанном коде нет `databaseURL`, возьмите адрес со страницы **Realtime Database** (он сверху, над данными).
+Если в блоке нет `databaseURL`, сайт сам подставит адрес базы в регионе europe-west1 (как в шаге 2).
 
 Ключи из `config.js` не секретные — их видит любой браузер. Данные защищают правила из шага 2.
 
