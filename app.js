@@ -45,6 +45,12 @@ const fmt = s => {
   const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
   return [h, m, x].map(v => String(v).padStart(2, "0")).join(":");
 };
+// room time, capped at the end of the video so a finished film doesn't keep counting
+function roomTime() {
+  if (!S) return null;
+  const t = expected(S), d = player && player.ready ? player.duration() : 0;
+  return d ? Math.min(t, d) : t;
+}
 const srcKey = src => src ? `${src.type}:${src.id || src.url || src.name || ""}` : null;
 
 function toast(text) {
@@ -266,7 +272,7 @@ setInterval(() => {
 // ---------------------------------------------------------------- rendering
 function renderSync() {
   const chip = $("#syncChip"); chip.className = "chip";
-  $("#tc").textContent = S ? `${fmt(expected(S))}${player?.duration() ? " / " + fmt(player.duration()) : ""}` : "00:00:00";
+  $("#tc").textContent = S ? `${fmt(roomTime())}${player?.duration() ? " / " + fmt(player.duration()) : ""}` : "00:00:00";
   const src = S?.src;
   $("#srcLabel").textContent = !src ? "Ничего не выбрано"
     : src.type === "yt" ? "YouTube · " + src.id
@@ -276,7 +282,7 @@ function renderSync() {
   else if (!player || !player.ready) chip.textContent = src.type === "file" && !player ? "Нужен файл" : "Загрузка…";
   else if (!S.playing) chip.textContent = "Пауза у всех";
   else {
-    const diff = Math.abs(player.time() - expected(S));
+    const diff = Math.abs(player.time() - roomTime());
     if (diff < 1.2) { chip.textContent = "В синхроне"; chip.classList.add("ok"); }
     else { chip.textContent = "Догоняем…"; chip.classList.add("warn"); }
   }
@@ -296,7 +302,7 @@ function renderPeople() {
   const ul = $("#people"); ul.replaceChildren();
   const list = Object.entries(members);
   $("#peopleLabel").textContent = `В зале · ${list.length || 1}`;
-  const roomT = S ? expected(S) : null;
+  const roomT = roomTime();
   for (const [id, m] of list) {
     const name = String(m.nick || "Зритель").slice(0, 24);
     const li = document.createElement("li");
