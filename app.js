@@ -244,7 +244,7 @@ function makeYouTubePlayer(id, handlers) {
 const handlers = {
   onReady() { $("#srcErr").hidden = true; applyState(); renderSync(); },
   onPlay() {
-    $("#tapJoin").hidden = true;
+    $("#tapJoin").hidden = true; $("#tapHint").hidden = true;
     if (now() < applyingUntil || !S) return;
     if (!S.playing) writeState({ playing: true, pos: player.time() });
   },
@@ -280,7 +280,7 @@ function loadSource(src) {
   const key = srcKey(src);
   if (key === curSrcKey && player) return;
   player?.destroy(); player = null; curSrcKey = key;
-  $("#srcErr").hidden = true; $("#tapJoin").hidden = true;
+  $("#srcErr").hidden = true; $("#tapJoin").hidden = true; $("#tapHint").hidden = true;
   const drop = $("#drop");
   if (!src) { drop.hidden = false; $("#dropPick").hidden = true; $("#dropTitle").textContent = "Что смотрим?"; $("#dropText").textContent = "Вставьте ссылку сверху или выберите файл. Видео сразу появится у всех в комнате."; renderSync(); return; }
   if (src.type === "yt") { drop.hidden = true; player = makeYouTubePlayer(src.id, handlers); }
@@ -309,7 +309,10 @@ function applyState() {
   if (dur) want = Math.min(want, dur - 0.1);
   if (Math.abs(player.time() - want) > 1) player.seek(want);
   if (S.playing && player.paused()) {
-    Promise.resolve(player.play()).catch(() => { $("#tapJoin").hidden = false; });
+    Promise.resolve(player.play()).catch(() => {
+      // a cross-origin player (YouTube, RuTube) only starts from a click inside it
+      if (player && player.kind !== "video") $("#tapHint").hidden = false; else $("#tapJoin").hidden = false;
+    });
   } else if (!S.playing && !player.paused()) {
     player.pause();
   }
