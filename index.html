@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Общий сеанс</title>
+<meta name="description" content="Смотрите фильмы и сериалы вместе: синхронная пауза и перемотка, чат и реакции.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><h1>Общий <b>сеанс</b></h1></div>
+    <span class="conn"><span class="dot" id="connDot"></span><span id="connText">Подключение…</span></span>
+    <label class="nick"><span class="label">Имя</span><input type="text" id="nickInput" maxlength="24" placeholder="Ваше имя"></label>
+  </header>
+
+  <!-- SETUP (shown when config.js is not filled) -->
+  <section id="setup" class="setup" hidden>
+    <h2>Осталось подключить Firebase</h2>
+    <p>Откройте файл <code>config.js</code> и вставьте туда настройки своего проекта Firebase. Пошаговая инструкция — в <code>README.md</code>.</p>
+    <p class="err" id="setupErr"></p>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="lobby" class="lobby" hidden>
+    <div class="hero">
+      <h2>Смотрите кино вместе, <span>секунда в секунду</span></h2>
+      <p>Пауза, перемотка и запуск у одного — сразу у всех в комнате. Рядом чат и реакции, чтобы обсуждать прямо по ходу серии.</p>
+      <ol class="steps">
+        <li><span class="n">1</span><div><b>Создайте комнату</b><span>Получите ссылку вида …/#kino-4821.</span></div></li>
+        <li><span class="n">2</span><div><b>Отправьте ссылку друзьям</b><span>Регистрация не нужна: открыли ссылку — и уже в зале.</span></div></li>
+        <li><span class="n">3</span><div><b>Поставьте видео</b><span>Ссылка на YouTube, прямая ссылка на MP4 или m3u8, либо у каждого свой одинаковый файл.</span></div></li>
+      </ol>
+    </div>
+    <div class="panel">
+      <div class="ticket">
+        <span class="label">Новая комната</span>
+        <button class="btn primary" id="createBtn" type="button">Создать комнату</button>
+      </div>
+      <form class="ticket" id="joinForm">
+        <label class="label" for="codeInput">Войти по коду</label>
+        <div class="row">
+          <input type="text" id="codeInput" placeholder="kino-4821" maxlength="32" autocomplete="off" spellcheck="false">
+          <button class="btn" type="submit">Войти</button>
+        </div>
+        <span class="err" id="codeErr" hidden>Код — латинские буквы, цифры и дефис, от 3 до 32 символов.</span>
+      </form>
+    </div>
+  </section>
+
+  <!-- ROOM -->
+  <section id="roomView" hidden>
+    <div class="roombar">
+      <span class="label">Комната</span>
+      <span class="roomcode" id="roomCode">—</span>
+      <button class="btn ghost" id="copyBtn" type="button">Скопировать ссылку</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="cinemaBtn" type="button">Кинорежим</button>
+      <button class="btn" id="leaveBtn" type="button">Выйти</button>
+    </div>
+    <div class="room">
+      <div class="stage">
+        <form class="srcform" id="srcForm">
+          <input type="text" id="srcInput" placeholder="Ссылка на YouTube или прямая ссылка на видео (.mp4, .webm, .m3u8)" autocomplete="off" spellcheck="false">
+          <button class="btn primary" type="submit">Поставить</button>
+          <label class="btn" for="fileInput">Свой файл</label>
+          <input type="file" id="fileInput" accept="video/*,.mkv" hidden>
+        </form>
+        <span class="err" id="srcErr" hidden></span>
+        <div class="screen" id="screen">
+          <div class="player-host" id="playerHost"></div>
+          <div class="drop" id="drop">
+            <div>
+              <h3 id="dropTitle">Что смотрим?</h3>
+              <p id="dropText">Вставьте ссылку сверху или выберите файл. Видео сразу появится у всех в комнате.</p>
+              <label class="btn primary" for="fileInput" id="dropPick" hidden>Выбрать файл</label>
+            </div>
+          </div>
+          <div class="tap" id="tapJoin" hidden><button class="btn primary" id="tapBtn" type="button">▶ Присоединиться к просмотру</button></div>
+          <div class="float-layer" id="floats"></div>
+        </div>
+        <div class="syncbar">
+          <span class="chip" id="syncChip">Ничего не выбрано</span>
+          <span class="tc mono" id="tc">00:00:00</span>
+          <span class="file" id="srcLabel">—</span>
+        </div>
+        <div class="warnbox" id="mismatch" hidden></div>
+        <div class="reacts" id="reacts" aria-label="Реакции"></div>
+      </div>
+      <aside>
+        <div class="box">
+          <span class="label" id="peopleLabel">В зале</span>
+          <ul class="people" id="people"></ul>
+        </div>
+        <div class="box">
+          <span class="label">Чат</span>
+          <div class="chat" id="chat" aria-live="polite"><span class="empty">Пока тихо. Напишите первым.</span></div>
+          <form class="chatform" id="chatForm">
+            <input type="text" id="chatInput" maxlength="500" placeholder="Написать…" autocomplete="off">
+            <button class="btn primary" type="submit">Отправить</button>
+          </form>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
