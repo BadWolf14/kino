@@ -179,11 +179,13 @@ function makeRutubePlayer(id, handlers) {
           if (Math.abs(d.time - predicted) > 2 && now() > progSeekUntil) handlers.onSeek(d.time);
         }
         break;
-      case "player:changeState":
-        if (d.state === "playing" && state !== "playing") { state = "playing"; tWall = now(); handlers.onPlay(); }
-        else if ((d.state === "paused" || d.state === "stopped") && state === "playing") { t = cur(); state = d.state; handlers.onPause(); }
-        else if (d.state) state = d.state === "playing" ? "playing" : (d.state === "paused" || d.state === "stopped" ? d.state : state);
+      case "player:changeState": {
+        // seen in practice: playing, pause, paused, stopped, ended, seeking, seeked, buffering
+        const st = String(d.state || d.status || "");
+        if (st === "playing") { if (state !== "playing") { state = "playing"; tWall = now(); handlers.onPlay(); } }
+        else if (/^(pause|paused|stopped|ended)$/.test(st)) { if (state === "playing") { t = cur(); state = "paused"; handlers.onPause(); } }
         break;
+      }
       case "player:error":
         handlers.onError("RuTube не может показать это видео. Возможно, оно доступно только на самом RuTube.");
         break;
@@ -507,8 +509,21 @@ const fmtDur = s => { s = Math.round(Number(s) || 0); if (!s) return ""; const h
 const isoDur = iso => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || ""); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; };
 const safeImg = u => (typeof u === "string" && /^https:\/\//.test(u)) ? u : "";
 
+// RuTube's search API refuses requests from other sites (CORS), so without a proxy the tab
+// opens the search on rutube.ru and the viewer pastes the video link back here.
+/* global rutubeProxy */
+const RUTUBE_PROXY = (typeof rutubeProxy === "string" && /^https:\/\//.test(rutubeProxy)) ? rutubeProxy.replace(/\/$/, "") : "";
+function showRutubeLink(q) {
+  resultsMessage("RuTube не разрешает искать по своему каталогу с других сайтов. Откройте поиск на RuTube, выберите видео, скопируйте ссылку на него и вставьте её сюда: оно сразу появится у всех.", `RuTube · «${q}»`);
+  const a = document.createElement("a");
+  a.className = "btn primary"; a.target = "_blank"; a.rel = "noopener";
+  a.href = `https://rutube.ru/search/?query=${encodeURIComponent(q)}`;
+  a.textContent = `Искать «${q}» на RuTube`;
+  const wrap = document.createElement("div"); wrap.className = "empty"; wrap.appendChild(a);
+  $("#resultsGrid").appendChild(wrap);
+}
 async function searchRutube(q) {
-  const r = await fetch(`https://rutube.ru/api/search/video/?query=${encodeURIComponent(q)}&page=1`);
+  const r = await fetch(`${RUTUBE_PROXY}/api/search/video/?query=${encodeURIComponent(q)}&page=1`);
   if (!r.ok) throw new Error("rutube " + r.status);
   const j = await r.json();
   return (j.results || []).map(v => {
@@ -569,6 +584,7 @@ async function runSearch(q) {
   const seq = ++searchSeq;
   const names = { rutube: "RuTube", youtube: "YouTube", archive: "Archive.org" };
   if (searchTab === "youtube" && !ytKey()) { showYouTubeHelp(); return; }
+  if (searchTab === "rutube" && !RUTUBE_PROXY) { showRutubeLink(q); return; }
   resultsMessage("Ищу…", `${names[searchTab]} · «${q}»`);
   let list;
   try {
