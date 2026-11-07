@@ -63,7 +63,8 @@ function parseSource(raw) {
   raw = raw.trim();
   if (!raw) return null;
   let u;
-  try { u = new URL(raw); } catch { return { error: "Это не похоже на ссылку. Скопируйте адрес целиком, начиная с https://" }; }
+  if (!/^https?:\/\//i.test(raw) && !/^(www\.)?(youtube\.com|youtu\.be|rutube\.ru)\//i.test(raw)) return { search: raw };
+  try { u = new URL(/^https?:/i.test(raw) ? raw : "https://" + raw); } catch { return { error: "Это не похоже на ссылку. Скопируйте адрес целиком, начиная с https://" }; }
   if (u.protocol !== "https:" && u.protocol !== "http:") return { error: "Нужна ссылка, которая начинается с https://" };
   const host = u.hostname.replace(/^www\.|^m\./, "");
   let id = null;
@@ -75,6 +76,11 @@ function parseSource(raw) {
   if (host.endsWith("youtube.com") || host === "youtu.be") {
     if (!id || !/^[A-Za-z0-9_-]{6,20}$/.test(id)) return { error: "Не удалось найти видео в этой ссылке YouTube." };
     return { type: "yt", id };
+  }
+  if (host === "rutube.ru") {
+    const m = u.pathname.match(/^\/(?:video|play\/embed|shorts)\/(?:private\/)?([0-9a-f]{32})/i);
+    if (!m) return { error: "Не удалось найти видео в этой ссылке RuTube. Нужна ссылка вида rutube.ru/video/…" };
+    return { type: "rt", id: m[1].toLowerCase() };
   }
   return { type: "url", url: u.href.slice(0, 1000) };
 }
@@ -127,6 +133,66 @@ function loadYouTubeApi() {
     document.head.appendChild(s);
   });
   return ytApiPromise;
+}
+
+// RuTube: embedded iframe controlled through its postMessage API (JSON strings {type, data})
+function makeRutubePlayer(id, handlers) {
+  const host = $("#playerHost");
+  const f = document.createElement("iframe");
+  f.src = `https://rutube.ru/play/embed/${id}`;
+  f.allow = "autoplay; fullscreen; picture-in-picture; clipboard-write";
+  f.allowFullscreen = true;
+  host.replaceChildren(f);
+  let state = "paused", t = 0, tWall = now(), dur = 0, progSeekUntil = 0, destroyed = false;
+  const send = (type, data = {}) => { try { f.contentWindow.postMessage(JSON.stringify({ type, data }), "*"); } catch {} };
+  const playing = () => state === "playing";
+  const cur = () => t + (playing() ? (now() - tWall) / 1000 : 0);
+  const p = {
+    ready: false, kind: "rt",
+    time: cur,
+    duration: () => dur,
+    paused: () => !playing(),
+    play: () => { send("player:play"); return new Promise((res, rej) => setTimeout(() => playing() ? res() : rej(new Error("blocked")), 1800)); },
+    pause: () => send("player:pause"),
+    seek: s => { progSeekUntil = now() + 2000; t = s; tWall = now(); send("player:setCurrentTime", { time: s }); },
+    setRate: () => {},
+    destroy: () => { destroyed = true; window.removeEventListener("message", onMsg); f.remove(); }
+  };
+  function onMsg(e) {
+    if (destroyed || e.source !== f.contentWindow) return;
+    let m = e.data;
+    if (typeof m === "string") { try { m = JSON.parse(m); } catch { return; } }
+    if (!m || typeof m.type !== "string") return;
+    const d = m.data || {};
+    switch (m.type) {
+      case "player:ready":
+        if (!p.ready) { p.ready = true; handlers.onReady(); }
+        break;
+      case "player:durationChange":
+        if (typeof d.duration === "number") dur = d.duration;
+        if (!p.ready) { p.ready = true; handlers.onReady(); }
+        break;
+      case "player:currentTime":
+        if (typeof d.time === "number") {
+          const predicted = cur();
+          t = d.time; tWall = now();
+          if (Math.abs(d.time - predicted) > 2 && now() > progSeekUntil) handlers.onSeek(d.time);
+        }
+        break;
+      case "player:changeState":
+        if (d.state === "playing" && state !== "playing") { state = "playing"; tWall = now(); handlers.onPlay(); }
+        else if ((d.state === "paused" || d.state === "stopped") && state === "playing") { t = cur(); state = d.state; handlers.onPause(); }
+        else if (d.state) state = d.state === "playing" ? "playing" : (d.state === "paused" || d.state === "stopped" ? d.state : state);
+        break;
+      case "player:error":
+        handlers.onError("RuTube не может показать это видео. Возможно, оно доступно только на самом RuTube.");
+        break;
+    }
+  }
+  window.addEventListener("message", onMsg);
+  // some embeds never send player:ready; treat the loaded frame as ready after a moment
+  f.addEventListener("load", () => setTimeout(() => { if (!p.ready && !destroyed) { p.ready = true; handlers.onReady(); } }, 2500));
+  return p;
 }
 
 function makeYouTubePlayer(id, handlers) {
@@ -216,6 +282,7 @@ function loadSource(src) {
   const drop = $("#drop");
   if (!src) { drop.hidden = false; $("#dropPick").hidden = true; $("#dropTitle").textContent = "Что смотрим?"; $("#dropText").textContent = "Вставьте ссылку сверху или выберите файл. Видео сразу появится у всех в комнате."; renderSync(); return; }
   if (src.type === "yt") { drop.hidden = true; player = makeYouTubePlayer(src.id, handlers); }
+  else if (src.type === "rt") { drop.hidden = true; player = makeRutubePlayer(src.id, handlers); }
   else if (src.type === "url") { drop.hidden = true; player = makeVideoPlayer(src.url, handlers, /\.m3u8($|\?)/i.test(src.url)); }
   else if (src.type === "file") {
     if (localFile && (localFile.name === src.name || localFileFor === src.name)) {
@@ -260,7 +327,7 @@ $("#tapBtn").onclick = () => {
 setInterval(() => {
   if (player && player.ready && S && S.playing && !player.paused()) {
     const diff = player.time() - expected(S);
-    const hard = player.kind === "yt" ? 1.5 : 1.0;
+    const hard = player.kind === "video" ? 1.0 : 1.5;
     if (Math.abs(diff) > hard) { player.setRate(1); applyState(); }
     else if (player.kind === "video" && Math.abs(diff) > 0.25) player.setRate(diff > 0 ? 0.95 : 1.05);
     else player.setRate(1);
@@ -275,7 +342,9 @@ function renderSync() {
   $("#tc").textContent = S ? `${fmt(roomTime())}${player?.duration() ? " / " + fmt(player.duration()) : ""}` : "00:00:00";
   const src = S?.src;
   $("#srcLabel").textContent = !src ? "Ничего не выбрано"
+    : src.title ? String(src.title).slice(0, 160)
     : src.type === "yt" ? "YouTube · " + src.id
+    : src.type === "rt" ? "RuTube · " + src.id
     : src.type === "url" ? src.url
     : "Файл · " + src.name;
   if (!src) chip.textContent = "Ничего не выбрано";
@@ -419,6 +488,124 @@ function leaveRoom(silent) {
   }
 }
 
+// ---------------------------------------------------------------- search
+let searchTab = "rutube", searchSeq = 0;
+/* global youtubeApiKey */
+const ytKey = () => (typeof youtubeApiKey === "string" ? youtubeApiKey.trim() : "");
+
+function closeResults() { $("#results").hidden = true; $("#resultsGrid").replaceChildren(); }
+function resultsMessage(text, label) {
+  $("#results").hidden = false;
+  $("#resultsLabel").textContent = label || "Результаты";
+  const e = document.createElement("p"); e.className = "empty"; e.textContent = text;
+  $("#resultsGrid").replaceChildren(e);
+}
+function showYouTubeHelp() {
+  resultsMessage("Для поиска по YouTube нужен бесплатный ключ YouTube API. Его вставляют в файл youtube-key.js, инструкция в README. Ссылку на видео YouTube можно вставить и без ключа.", "YouTube");
+}
+const fmtDur = s => { s = Math.round(Number(s) || 0); if (!s) return ""; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
+const isoDur = iso => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || ""); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; };
+const safeImg = u => (typeof u === "string" && /^https:\/\//.test(u)) ? u : "";
+
+async function searchRutube(q) {
+  const r = await fetch(`https://rutube.ru/api/search/video/?query=${encodeURIComponent(q)}&page=1`);
+  if (!r.ok) throw new Error("rutube " + r.status);
+  const j = await r.json();
+  return (j.results || []).map(v => {
+    const id = String(v.id || (String(v.video_url || "").match(/[0-9a-f]{32}/) || [""])[0]).toLowerCase();
+    return /^[0-9a-f]{32}$/.test(id) ? {
+      src: { type: "rt", id, title: String(v.title || "").slice(0, 160) },
+      title: v.title || "Без названия", meta: v.author?.name || "", thumb: safeImg(v.thumbnail_url), dur: fmtDur(v.duration)
+    } : null;
+  }).filter(Boolean);
+}
+
+async function searchYouTube(q) {
+  const key = ytKey();
+  const r = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=24&q=${encodeURIComponent(q)}&key=${encodeURIComponent(key)}`);
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message || "youtube");
+  const items = (j.items || []).filter(i => i.id?.videoId);
+  // durations come from a second call; skip quietly if it fails
+  let durs = {};
+  try {
+    const ids = items.map(i => i.id.videoId).join(",");
+    const d = await (await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(key)}`)).json();
+    for (const v of d.items || []) durs[v.id] = isoDur(v.contentDetails?.duration);
+  } catch {}
+  const decode = s => { const t = document.createElement("textarea"); t.innerHTML = s; return t.value; };
+  return items.map(i => ({
+    src: { type: "yt", id: i.id.videoId, title: decode(i.snippet.title || "").slice(0, 160) },
+    title: decode(i.snippet.title || ""), meta: decode(i.snippet.channelTitle || ""),
+    thumb: safeImg(i.snippet.thumbnails?.medium?.url), dur: fmtDur(durs[i.id.videoId])
+  }));
+}
+
+async function searchArchive(q) {
+  const query = `(${q}) AND mediatype:(movies) AND NOT collection:(tvnews)`;
+  const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=identifier&fl[]=title&fl[]=year&fl[]=creator&sort[]=downloads+desc&rows=24&output=json`;
+  const j = await (await fetch(url)).json();
+  return (j.response?.docs || []).filter(d => /^[A-Za-z0-9._-]+$/.test(d.identifier || "")).map(d => ({
+    archive: d.identifier,
+    title: Array.isArray(d.title) ? d.title[0] : (d.title || d.identifier),
+    meta: [d.year, Array.isArray(d.creator) ? d.creator[0] : d.creator].filter(Boolean).join(" · "),
+    thumb: `https://archive.org/services/img/${d.identifier}`, dur: ""
+  }));
+}
+
+// pick a browser-playable video file from an Archive.org item
+async function resolveArchive(id, title) {
+  const j = await (await fetch(`https://archive.org/metadata/${encodeURIComponent(id)}`)).json();
+  const files = (j.files || []).filter(f => typeof f.name === "string");
+  const pick = files.find(f => /\.mp4$/i.test(f.name) && /h\.264|mpeg4/i.test(f.format || ""))
+    || files.find(f => /\.mp4$/i.test(f.name))
+    || files.find(f => /\.(webm|ogv)$/i.test(f.name));
+  if (!pick) throw new Error("В этой записи нет видео, которое играет в браузере.");
+  const path = pick.name.split("/").map(encodeURIComponent).join("/");
+  return { type: "url", url: `https://archive.org/download/${encodeURIComponent(id)}/${path}`, title: String(title || id).slice(0, 160) };
+}
+
+async function runSearch(q) {
+  const seq = ++searchSeq;
+  const names = { rutube: "RuTube", youtube: "YouTube", archive: "Archive.org" };
+  if (searchTab === "youtube" && !ytKey()) { showYouTubeHelp(); return; }
+  resultsMessage("Ищу…", `${names[searchTab]} · «${q}»`);
+  let list;
+  try {
+    list = searchTab === "rutube" ? await searchRutube(q) : searchTab === "youtube" ? await searchYouTube(q) : await searchArchive(q);
+  } catch (err) {
+    if (seq !== searchSeq) return;
+    resultsMessage(searchTab === "rutube"
+      ? "RuTube не ответил на поиск. Попробуйте ещё раз или вставьте ссылку на видео RuTube."
+      : searchTab === "youtube" ? "YouTube не принял запрос: " + err.message
+      : "Archive.org не ответил. Попробуйте ещё раз чуть позже.", names[searchTab]);
+    return;
+  }
+  if (seq !== searchSeq) return;
+  if (!list.length) { resultsMessage("Ничего не нашлось. Попробуйте другое название или другой источник.", `${names[searchTab]} · «${q}»`); return; }
+  $("#resultsLabel").textContent = `${names[searchTab]} · «${q}» · ${list.length}`;
+  const grid = $("#resultsGrid"); grid.replaceChildren();
+  for (const it of list) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "card";
+    const th = document.createElement("div"); th.className = "thumb";
+    if (it.thumb) { const im = document.createElement("img"); im.loading = "lazy"; im.alt = ""; im.referrerPolicy = "no-referrer"; im.src = it.thumb; th.appendChild(im); }
+    if (it.dur) { const d = document.createElement("span"); d.className = "dur"; d.textContent = it.dur; th.appendChild(d); }
+    const t = document.createElement("span"); t.className = "ttl"; t.textContent = it.title;
+    const m = document.createElement("span"); m.className = "meta"; m.textContent = it.meta;
+    b.append(th, t, m);
+    b.onclick = async () => {
+      if (it.archive) {
+        b.disabled = true;
+        try { const src = await resolveArchive(it.archive, it.title); closeResults(); setSource(src); }
+        catch (e) { b.disabled = false; const er = $("#srcErr"); er.textContent = e.message || "Не удалось открыть запись Archive.org."; er.hidden = false; }
+        return;
+      }
+      closeResults(); $("#srcInput").value = ""; setSource(it.src);
+    };
+    grid.appendChild(b);
+  }
+}
+
 // ---------------------------------------------------------------- UI wiring
 function wireUi() {
   const nickInput = $("#nickInput");
@@ -449,10 +636,26 @@ function wireUi() {
     e.preventDefault();
     const res = parseSource($("#srcInput").value);
     if (!res) return;
+    $("#srcErr").hidden = true;
+    if (res.search) { runSearch(res.search); return; }
     if (res.error) { const er = $("#srcErr"); er.textContent = res.error; er.hidden = false; return; }
-    $("#srcInput").value = "";
+    $("#srcInput").value = ""; closeResults();
     setSource(res);
   });
+
+  document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
+    searchTab = b.dataset.src;
+    document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", String(x === b)));
+    const q = $("#srcInput").value.trim();
+    const parsed = q ? parseSource(q) : null;
+    if (parsed && parsed.search) runSearch(parsed.search);
+    else if (searchTab === "youtube" && !ytKey()) showYouTubeHelp();
+    else $("#srcInput").focus();
+  }));
+  $("#srcInput").addEventListener("input", () => {
+    $("#srcSubmit").textContent = parseSource($("#srcInput").value)?.search ? "Найти" : "Поставить";
+  });
+  $("#resultsClose").onclick = closeResults;
 
   $("#fileInput").addEventListener("change", () => {
     const f = $("#fileInput").files[0]; $("#fileInput").value = "";
