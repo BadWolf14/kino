@@ -1,9 +1,9 @@
-// Вставьте сюда блок настроек из Firebase целиком, как он есть:
-// Firebase Console → Project settings → Your apps → kino-web → SDK setup and configuration → Config.
-// Он начинается с «const firebaseConfig = {» и заканчивается на «};». Ничего переименовывать не нужно.
 const firebaseConfig = {
-  apiKey: "ВСТАВЬТЕ_СЮДА",
-  authDomain: "ВАШ-ПРОЕКТ.firebaseapp.com",
-  projectId: "ВАШ-ПРОЕКТ",
-  appId: "ВСТАВЬТЕ_СЮДА"
+  apiKey: "AIzaSyBih-KEd43mtpC0g54lMe-rSPlEyCrUdyI",
+  authDomain: "kinoseans.firebaseapp.com",
+  databaseURL: "https://kinoseans-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "kinoseans",
+  storageBucket: "kinoseans.firebasestorage.app",
+  messagingSenderId: "771883888073",
+  appId: "1:771883888073:web:e6258c0624ae814a580c18"
 };
