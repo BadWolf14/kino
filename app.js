@@ -192,6 +192,7 @@ function writeState(patch) {
   lastWrittenV = v;
   set(ref(db, `rooms/${code}/state`), S).catch(err => toast("Не удалось сохранить: " + err.message));
   renderSync();
+  setTimeout(pushMember, 300);
 }
 
 function setSource(src) {
@@ -238,6 +239,7 @@ function applyState() {
     player.pause();
   }
   if (!S.playing) player.setRate(1);
+  setTimeout(pushMember, 1500);
 }
 
 $("#tapBtn").onclick = () => {
@@ -258,6 +260,7 @@ setInterval(() => {
     else player.setRate(1);
   }
   renderSync();
+  if (code) renderPeople();
 }, 1000);
 
 // ---------------------------------------------------------------- rendering
@@ -293,19 +296,32 @@ function renderPeople() {
   const ul = $("#people"); ul.replaceChildren();
   const list = Object.entries(members);
   $("#peopleLabel").textContent = `В зале · ${list.length || 1}`;
+  const roomT = S ? expected(S) : null;
   for (const [id, m] of list) {
     const name = String(m.nick || "Зритель").slice(0, 24);
     const li = document.createElement("li");
     li.appendChild(avatar(name, (Number(m.col) | 0) % 6));
     const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = name + (id === uid ? " (вы)" : ""); li.appendChild(nm);
+    // where this viewer is right now: own row from the live player, others extrapolated from their last report
+    let t = null, playing = false, ready = !!m.ready;
+    if (id === uid && player && player.ready) { t = player.time(); playing = !player.paused(); ready = true; }
+    else if (ready && typeof m.pos === "number" && typeof m.at === "number") {
+      playing = !!m.playing;
+      t = m.pos + (playing ? Math.max(0, serverNow() - m.at) / 1000 : 0);
+    }
+    const tc = document.createElement("span"); tc.className = "pt mono";
+    tc.textContent = t == null ? "--:--:--" : fmt(t);
     const st = document.createElement("span"); st.className = "st";
-    if (!m.ready) st.textContent = S?.src?.type === "file" ? "ждёт файл" : "загружается";
-    else if (S && S.playing && m.playing && typeof m.pos === "number" && typeof m.at === "number") {
-      const lag = (m.pos + (serverNow() - m.at) / 1000) - expected(S);
-      if (Math.abs(lag) < 2.5) { st.textContent = "в синхроне"; st.classList.add("ok"); }
-      else { st.textContent = lag < 0 ? `отстаёт на ${Math.round(-lag)} с` : `впереди на ${Math.round(lag)} с`; st.classList.add("warn"); }
-    } else st.textContent = S?.playing ? "на паузе" : "готов";
-    li.appendChild(st); ul.appendChild(li);
+    if (!ready) st.textContent = S?.src?.type === "file" ? "ждёт файл" : "загружается";
+    else if (t != null && roomT != null) {
+      const lag = t - roomT;
+      const a = Math.abs(lag);
+      if (a < 1.5) { st.textContent = a < 0.1 ? "точно" : `${lag > 0 ? "+" : "−"}${a.toFixed(1)} с`; st.classList.add("ok"); }
+      else { st.textContent = `${lag > 0 ? "впереди на" : "отстаёт на"} ${a < 10 ? a.toFixed(1) : Math.round(a)} с`; st.classList.add("warn"); }
+      if (!playing && S.playing) st.textContent += " · пауза";
+    } else st.textContent = "готов";
+    const right = document.createElement("span"); right.className = "pr"; right.append(tc, st);
+    li.appendChild(right); ul.appendChild(li);
   }
 }
 
@@ -362,7 +378,7 @@ function joinRoom(c) {
   memberRef = ref(db, `rooms/${c}/members/${uid}`);
   onDisconnect(memberRef).remove();
   pushMember();
-  memberTimer = setInterval(pushMember, 5000);
+  memberTimer = setInterval(pushMember, 2000);
 
   listen(ref(db, `rooms/${c}/state`), "value", snap => {
     const val = snap.val();
