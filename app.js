@@ -4,6 +4,7 @@ import {
   getDatabase, ref, set, push, onValue, onChildAdded, onDisconnect,
   serverTimestamp, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+import { parseExport, parseShareCode, isShareCode, loadLibrary, saveLibrary, clearLibrary, toRoomSource, dataUrlToFile } from "./library.js?v=7";
 // config.js is a plain script that declares `firebaseConfig` exactly as Firebase shows it
 /* global firebaseConfig */
 const FIREBASE_CONFIG = (() => {
@@ -586,6 +587,7 @@ async function resolveArchive(id, title) {
 async function runSearch(q) {
   const seq = ++searchSeq;
   const names = { rutube: "RuTube", youtube: "YouTube", archive: "Archive.org" };
+  if (searchTab === "library") { showLibrary(q); return; }
   if (searchTab === "youtube" && !ytKey()) { showYouTubeHelp(); return; }
   if (searchTab === "rutube" && !RUTUBE_PROXY) { showRutubeLink(q); return; }
   resultsMessage("Ищу…", `${names[searchTab]} · «${q}»`);
@@ -625,6 +627,121 @@ async function runSearch(q) {
   }
 }
 
+// ---------------------------------------------------------------- «Моя коллекция» (Framesearch)
+let pendingImport = null;
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const safePoster = u => (typeof u === "string" && (/^https:\/\//.test(u) || /^data:image\/(png|jpe?g|webp|gif|avif);/i.test(u))) ? u : "";
+const typeName = t => ({ movie: "фильм", series: "сериал", anime: "аниме" }[t] || "");
+
+function libHead(label, actions) {
+  $("#results").hidden = false;
+  $("#resultsLabel").textContent = label;
+  const grid = $("#resultsGrid"); grid.replaceChildren();
+  const bar = $("#libBar") || el("div", "libbar");
+  bar.id = "libBar"; bar.replaceChildren(...actions);
+  grid.appendChild(bar);
+  return grid;
+}
+const libBtn = (text, fn, primary) => { const b = el("button", "btn small" + (primary ? " primary" : " ghost"), text); b.type = "button"; b.onclick = fn; return b; };
+const libUpload = text => { const l = el("label", "btn small primary", text); l.htmlFor = "libFile"; return l; };
+
+async function importPending(password) {
+  if (!pendingImport) return;
+  const { kind, text } = pendingImport;
+  try {
+    const data = kind === "code" ? await parseShareCode(text, password) : await parseExport(text, password);
+    pendingImport = null;
+    if (kind === "code") { $("#srcInput").value = ""; showEntries(data, "Код из Framesearch", false); return; }
+    await saveLibrary(data);
+    toast(`Коллекция загружена: ${data.videos.length} видео`);
+    selectTab("library"); showLibrary("");
+  } catch (e) {
+    if (e.needPassword || /пароль/i.test(e.message)) { askPassword(e.message); return; }
+    pendingImport = null;
+    resultsMessage(e.message || "Не удалось прочитать файл.", "Моя коллекция");
+  }
+}
+
+function askPassword(msg) {
+  const grid = libHead("Моя коллекция", []);
+  const f = el("form", "pwform");
+  const p = el("p", "empty", msg);
+  const i = el("input"); i.type = "password"; i.id = "libPass"; i.placeholder = "Пароль экспорта"; i.autocomplete = "off";
+  const b = el("button", "btn primary", "Открыть"); b.type = "submit";
+  f.append(p, i, b);
+  f.onsubmit = e => { e.preventDefault(); importPending(i.value); };
+  grid.appendChild(f); i.focus();
+}
+
+function selectTab(name) {
+  searchTab = name;
+  document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", String(x.dataset.src === name)));
+}
+
+async function showLibrary(filter) {
+  const lib = await loadLibrary();
+  if (!lib || !lib.videos?.length) {
+    const grid = libHead("Моя коллекция", [libUpload("Загрузить экспорт Framesearch")]);
+    const p = el("div", "empty libhelp");
+    p.append(
+      el("p", null, "Сюда можно подключить вашу коллекцию из Framesearch. В Framesearch откройте «Импорт/Экспорт» → «Экспорт» и загрузите сохранённый файл кнопкой выше."),
+      el("p", null, "Код «Поделиться» (начинается с P: или E:) можно просто вставить в строку поиска."),
+      el("p", "muted", "Коллекция остаётся только в этом браузере. В комнату уходит лишь то видео, которое вы выберете.")
+    );
+    grid.appendChild(p);
+    return;
+  }
+  const q = String(filter || "").trim().toLowerCase();
+  const list = q ? { videos: lib.videos.filter(v => [v.title, v.year, v.genre].join(" ").toLowerCase().includes(q)), episodes: lib.episodes } : lib;
+  showEntries(list, `Моя коллекция · ${list.videos.length}${q ? ` из ${lib.videos.length}` : ""}`, true);
+}
+
+function showEntries(data, label, isLibrary) {
+  const actions = isLibrary ? [libUpload("Обновить"), libBtn("Убрать коллекцию", async () => { await clearLibrary(); showLibrary(""); })] : [];
+  const grid = libHead(label, actions);
+  if (!data.videos.length) { grid.appendChild(el("p", "empty", "Ничего не нашлось.")); return; }
+  for (const v of data.videos) {
+    const eps = data.episodes.filter(e => e.videoId === v.id && (e.sourceUrl || "")).sort((a, b) => a.season - b.season || a.episode - b.episode);
+    const meta = [v.year, typeName(v.type), eps.length ? `${eps.length} сер.` : ""].filter(Boolean).join(" · ");
+    const check = eps.length ? null : toRoomSource(v, v.title, parseSource);
+    grid.appendChild(entryCard(v.title, meta, safePoster(v.poster), check && check.error, () => {
+      if (eps.length) showEpisodes(v, eps, () => showEntries(data, label, isLibrary));
+      else pickEntry(check, v.title);
+    }));
+  }
+}
+
+function showEpisodes(v, eps, back) {
+  const grid = libHead(v.title, [libBtn("← Назад", back)]);
+  for (const e of eps) {
+    const name = `S${e.season}E${e.episode}${e.title ? " · " + e.title : ""}`;
+    const check = toRoomSource({ ...e, sourceCategory: v.sourceCategory }, `${v.title} · ${name}`, parseSource);
+    grid.appendChild(entryCard(name, v.title, safePoster(v.poster), check.error, () => pickEntry(check, `${v.title} · ${name}`)));
+  }
+}
+
+function entryCard(title, meta, poster, problem, onClick) {
+  const b = el("button", "card" + (problem ? " off" : "")); b.type = "button";
+  const th = el("div", "thumb poster");
+  if (poster) { const im = el("img"); im.loading = "lazy"; im.alt = ""; im.referrerPolicy = "no-referrer"; im.src = poster; th.appendChild(im); }
+  if (problem) th.appendChild(el("span", "dur", "не синхронизируется"));
+  b.append(th, el("span", "ttl", title), el("span", "meta", meta));
+  if (problem) b.title = problem;
+  b.onclick = onClick;
+  return b;
+}
+
+function pickEntry(check, title) {
+  if (check.error) { const er = $("#srcErr"); er.textContent = check.error; er.hidden = false; return; }
+  $("#srcErr").hidden = true;
+  if (check.file) {
+    try { useLocalFile(dataUrlToFile(check.file, title)); closeResults(); }
+    catch { const er = $("#srcErr"); er.textContent = "Не удалось открыть видео из коллекции."; er.hidden = false; }
+    return;
+  }
+  closeResults(); setSource(check.src);
+}
+
 // ---------------------------------------------------------------- UI wiring
 function wireUi() {
   const nickInput = $("#nickInput");
@@ -653,7 +770,9 @@ function wireUi() {
 
   $("#srcForm").addEventListener("submit", e => {
     e.preventDefault();
-    const res = parseSource($("#srcInput").value);
+    const raw = $("#srcInput").value.trim();
+    if (isShareCode(raw)) { pendingImport = { kind: "code", text: raw }; importPending(""); return; }
+    const res = parseSource(raw);
     if (!res) return;
     $("#srcErr").hidden = true;
     if (res.search) { runSearch(res.search); return; }
@@ -667,17 +786,30 @@ function wireUi() {
     document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", String(x === b)));
     const q = $("#srcInput").value.trim();
     const parsed = q ? parseSource(q) : null;
-    if (parsed && parsed.search) runSearch(parsed.search);
+    if (searchTab === "library") showLibrary(parsed && parsed.search ? parsed.search : "");
+    else if (parsed && parsed.search) runSearch(parsed.search);
     else if (searchTab === "youtube" && !ytKey()) showYouTubeHelp();
     else $("#srcInput").focus();
   }));
   $("#srcInput").addEventListener("input", () => {
-    $("#srcSubmit").textContent = parseSource($("#srcInput").value)?.search ? "Найти" : "Поставить";
+    const v = $("#srcInput").value;
+    $("#srcSubmit").textContent = isShareCode(v) ? "Открыть" : parseSource(v)?.search ? "Найти" : "Поставить";
   });
   $("#resultsClose").onclick = closeResults;
 
   $("#fileInput").addEventListener("change", () => {
     const f = $("#fileInput").files[0]; $("#fileInput").value = "";
+    useLocalFile(f);
+  });
+  $("#libFile").addEventListener("change", async () => {
+    const f = $("#libFile").files[0]; $("#libFile").value = "";
+    if (!f) return;
+    pendingImport = { kind: "file", text: await f.text() };
+    importPending("");
+  });
+}
+
+function useLocalFile(f) {
     if (!f || !code) return;
     localFile = f; localFileFor = null;
     // the room already plays a file and this viewer has no player yet: this is their own copy of it
@@ -688,8 +820,9 @@ function wireUi() {
     probe.onloadedmetadata = () => { const dur = probe.duration || 0; URL.revokeObjectURL(url); setSource({ type: "file", name: f.name.slice(0, 200), size: f.size, dur }); };
     probe.onerror = () => { URL.revokeObjectURL(url); setSource({ type: "file", name: f.name.slice(0, 200), size: f.size, dur: 0 }); };
     probe.src = url;
-  });
+}
 
+function wireUi2() {
   const screen = $("#screen");
   ["dragenter", "dragover"].forEach(ev => screen.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.add("over"); }));
   ["dragleave", "drop"].forEach(ev => screen.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.remove("over"); }));
@@ -739,6 +872,7 @@ function showSetup(msg) {
 
   const auth = getAuth(app);
   wireUi();
+  wireUi2();
   onAuthStateChanged(auth, user => {
     if (!user) return;
     const first = !uid;

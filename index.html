@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" defer></script>
 </head>
 <body>
@@ -71,11 +71,13 @@
             <button class="btn primary" type="submit" id="srcSubmit">Найти</button>
             <label class="btn" for="fileInput">Свой файл</label>
             <input type="file" id="fileInput" accept="video/*,.mkv" hidden>
+            <input type="file" id="libFile" accept=".framesearch,.json,application/json,text/plain" hidden>
           </form>
           <div class="tabs" role="tablist" aria-label="Где искать">
             <button type="button" role="tab" class="tab" data-src="rutube" aria-selected="true">RuTube</button>
             <button type="button" role="tab" class="tab" data-src="youtube" aria-selected="false">YouTube</button>
             <button type="button" role="tab" class="tab" data-src="archive" aria-selected="false">Archive.org</button>
+            <button type="button" role="tab" class="tab" data-src="library" aria-selected="false">Моя коллекция</button>
           </div>
           <div class="results" id="results" hidden>
             <div class="results-head"><span class="label" id="resultsLabel">Результаты</span><button type="button" class="btn ghost small" id="resultsClose">Закрыть</button></div>
@@ -122,8 +124,8 @@
   </section>
 </div>
 <div class="toast" id="toast" hidden></div>
-<script src="config.js?v=6"></script>
-<script src="youtube-key.js?v=6"></script>
-<script type="module" src="app.js?v=6"></script>
+<script src="config.js?v=7"></script>
+<script src="youtube-key.js?v=7"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

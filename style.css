@@ -170,3 +170,15 @@ body{margin:0}
 .results .empty{grid-column:1/-1}
 
 .taphint{position:absolute;top:12px;left:50%;transform:translateX(-50%);max-width:calc(100% - 24px);background:rgba(0,0,0,.78);color:#fff;font-size:13px;font-weight:500;padding:7px 12px;border-radius:999px;pointer-events:none;text-align:center;z-index:2}
+
+/* collection */
+.libbar{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+.libbar:empty{display:none}
+.libhelp{display:grid;gap:6px;color:var(--fg)}
+.libhelp p{margin:0;max-width:62ch}
+.libhelp .muted{color:var(--muted);font-size:13px}
+.pwform{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pwform p{flex-basis:100%;margin:0}
+.pwform input{flex:1 1 200px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.card .thumb.poster{aspect-ratio:2/3}
+.card.off{opacity:.55}
