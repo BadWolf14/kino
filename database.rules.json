@@ -24,6 +24,14 @@
             ".write": "auth != null && !data.exists() && $room.matches(/^[a-z0-9-]+$/) && $room.length >= 3 && $room.length <= 32",
             ".validate": "newData.child('uid').val() === auth.uid && newData.child('e').isString() && newData.child('e').val().length <= 8"
           }
+        },
+        "rtc": {
+          "$host": {
+            ".write": "auth != null && auth.uid === $host && $room.matches(/^[a-z0-9-]+$/) && $room.length >= 3 && $room.length <= 32",
+            "$viewer": {
+              ".write": "auth != null && auth.uid === $viewer && $room.matches(/^[a-z0-9-]+$/) && $room.length >= 3 && $room.length <= 32"
+            }
+          }
         }
       }
     }

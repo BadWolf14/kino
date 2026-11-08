@@ -4,7 +4,8 @@ import {
   getDatabase, ref, set, push, onValue, onChildAdded, onDisconnect,
   serverTimestamp, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
-import { parseExport, parseShareCode, isShareCode, loadLibrary, saveLibrary, clearLibrary, toRoomSource, dataUrlToFile } from "./library.js?v=7";
+import { startHost, startViewer } from "./live.js?v=8";
+import { parseExport, parseShareCode, isShareCode, loadLibrary, saveLibrary, clearLibrary, toRoomSource, dataUrlToFile } from "./library.js?v=8";
 // config.js is a plain script that declares `firebaseConfig` exactly as Firebase shows it
 /* global firebaseConfig */
 const FIREBASE_CONFIG = (() => {
@@ -52,7 +53,10 @@ function roomTime() {
   const t = expected(S), d = player && player.ready ? player.duration() : 0;
   return d ? Math.min(t, d) : t;
 }
-const srcKey = src => src ? `${src.type}:${src.id || src.url || src.name || ""}` : null;
+const srcKey = src => !src ? null : src.type === "live" ? `live:${src.host}:${src.sid}` : `${src.type}:${src.id || src.url || src.name || ""}`;
+const rid = () => Math.random().toString(36).slice(2, 10);
+let liveFile = null, liveHost = null, liveViewer = null, liveViewers = 0;
+function stopLive() { liveHost?.stop(); liveHost = null; liveViewer?.stop(); liveViewer = null; liveViewers = 0; }
 
 function toast(text) {
   const t = $("#toast"); t.textContent = text; t.hidden = false;
@@ -97,7 +101,7 @@ function makeVideoPlayer(srcUrl, handlers, isHls) {
   host.replaceChildren(v);
   let hls = null, pendingSeek = false;
   const p = {
-    ready: false, kind: "video",
+    ready: false, kind: "video", el: v,
     time: () => v.currentTime || 0,
     duration: () => v.duration || 0,
     paused: () => v.paused,
@@ -134,6 +138,35 @@ function loadYouTubeApi() {
     document.head.appendChild(s);
   });
   return ytApiPromise;
+}
+
+// Live broadcast viewer: the picture comes from the host's browser, so timing is the host's job
+function makeLivePlayer(src) {
+  const host = $("#playerHost");
+  const v = document.createElement("video");
+  v.autoplay = true; v.playsInline = true; v.controls = true;
+  host.replaceChildren(v);
+  const p = {
+    ready: false, kind: "live", el: v, status: "connecting",
+    time: () => roomTime() ?? 0,
+    duration: () => Number(src.dur) || 0,
+    paused: () => v.paused,
+    play: () => v.play(),
+    pause: () => {}, seek: () => {}, setRate: () => {},
+    destroy: () => { liveViewer?.stop(); liveViewer = null; v.srcObject = null; v.remove(); }
+  };
+  liveViewer = startViewer({
+    db, room: code, uid, host: src.host, video: v,
+    onStatus: st => {
+      p.status = st;
+      if (st === "stream" || st === "connected") {
+        p.ready = true;
+        v.play().then(() => { $("#tapJoin").hidden = true; }).catch(() => { $("#tapJoin").hidden = false; });
+      }
+      renderSync(); pushMember();
+    }
+  });
+  return p;
 }
 
 // RuTube: embedded iframe controlled through its postMessage API (JSON strings {type, data})
@@ -280,13 +313,31 @@ function setSource(src) {
 function loadSource(src) {
   const key = srcKey(src);
   if (key === curSrcKey && player) return;
+  stopLive();
   player?.destroy(); player = null; curSrcKey = key;
   $("#srcErr").hidden = true; $("#tapJoin").hidden = true; $("#tapHint").hidden = true;
   const drop = $("#drop");
+  $("#dropLive").hidden = true;
   if (!src) { drop.hidden = false; $("#dropPick").hidden = true; $("#dropTitle").textContent = "Что смотрим?"; $("#dropText").textContent = "Вставьте ссылку сверху или выберите файл. Видео сразу появится у всех в комнате."; renderSync(); return; }
   if (src.type === "yt") { drop.hidden = true; player = makeYouTubePlayer(src.id, handlers); }
   else if (src.type === "rt") { drop.hidden = true; player = makeRutubePlayer(src.id, handlers); }
   else if (src.type === "url") { drop.hidden = true; player = makeVideoPlayer(src.url, handlers, /\.m3u8($|\?)/i.test(src.url)); }
+  else if (src.type === "live") {
+    if (src.host !== uid) { drop.hidden = true; player = makeLivePlayer(src); }
+    else if (liveFile && liveFile.liveSid === src.sid) {
+      drop.hidden = true;
+      if (localFileUrl) URL.revokeObjectURL(localFileUrl);
+      localFileUrl = URL.createObjectURL(liveFile);
+      player = makeVideoPlayer(localFileUrl, handlers, false);
+      try {
+        liveHost = startHost({ db, room: code, uid, video: player.el, onViewers: n => { liveViewers = n; renderSync(); } });
+      } catch (e) { const er = $("#srcErr"); er.textContent = e.message; er.hidden = false; }
+    } else {
+      drop.hidden = false; $("#dropPick").hidden = true; $("#dropLive").hidden = false;
+      $("#dropTitle").textContent = "Трансляция остановилась";
+      $("#dropText").textContent = `Вы транслировали «${src.title || "файл"}», но страница перезагрузилась. Выберите этот файл снова, чтобы продолжить для всех.`;
+    }
+  }
   else if (src.type === "file") {
     if (localFile && (localFile.name === src.name || localFileFor === src.name)) {
       drop.hidden = true;
@@ -304,6 +355,11 @@ function loadSource(src) {
 
 function applyState() {
   if (!player || !player.ready || !S) return;
+  if (player.kind === "live") {
+    if (player.paused()) Promise.resolve(player.play()).catch(() => { $("#tapJoin").hidden = false; });
+    setTimeout(pushMember, 1500);
+    return;
+  }
   applyingUntil = now() + 1200;
   const dur = player.duration();
   let want = Math.max(0, expected(S));
@@ -331,7 +387,7 @@ $("#tapBtn").onclick = () => {
 
 // drift correction
 setInterval(() => {
-  if (player && player.ready && S && S.playing && !player.paused()) {
+  if (player && player.ready && player.kind !== "live" && S && S.playing && !player.paused()) {
     const diff = player.time() - expected(S);
     const hard = player.kind === "video" ? 1.0 : 1.5;
     if (Math.abs(diff) > hard) { player.setRate(1); applyState(); }
@@ -352,8 +408,19 @@ function renderSync() {
     : src.type === "yt" ? "YouTube · " + src.id
     : src.type === "rt" ? "RuTube · " + src.id
     : src.type === "url" ? src.url
+    : src.type === "live" ? "Трансляция"
     : "Файл · " + src.name;
   if (!src) chip.textContent = "Ничего не выбрано";
+  else if (src.type === "live" && src.host === uid && player) {
+    chip.textContent = liveViewers ? `Вы транслируете · ${liveViewers} зр.` : "Вы транслируете · ждём зрителей";
+    chip.classList.add("ok");
+  }
+  else if (src.type === "live" && player?.kind === "live") {
+    const st = player.status;
+    if (st === "connected" || st === "stream") { chip.textContent = S.playing ? "Трансляция идёт" : "Пауза у всех"; chip.classList.add("ok"); }
+    else if (st === "connecting") chip.textContent = "Подключение к трансляции…";
+    else { chip.textContent = st === "nohost" ? "Транслирующий не отвечает…" : "Нет связи, переподключаюсь…"; chip.classList.add("warn"); }
+  }
   else if (!player || !player.ready) chip.textContent = src.type === "file" && !player ? "Нужен файл" : "Загрузка…";
   else if (!S.playing) chip.textContent = "Пауза у всех";
   else {
@@ -393,7 +460,16 @@ function renderPeople() {
     const tc = document.createElement("span"); tc.className = "pt mono";
     tc.textContent = t == null ? "--:--:--" : fmt(t);
     const st = document.createElement("span"); st.className = "st";
-    if (!ready) st.textContent = S?.src?.type === "file" ? "ждёт файл" : "загружается";
+    if (S?.src?.type === "live") {
+      if (id === S.src.host) { st.textContent = "транслирует"; st.classList.add("ok"); }
+      else {
+        const ls = id === uid ? player?.status : m.ls;
+        if (ls === "connected" || ls === "stream") { st.textContent = "смотрит трансляцию"; st.classList.add("ok"); }
+        else if (ls === "connecting" || !ls) st.textContent = "подключается";
+        else { st.textContent = "нет связи"; st.classList.add("warn"); }
+      }
+    }
+    else if (!ready) st.textContent = S?.src?.type === "file" ? "ждёт файл" : "загружается";
     else if (t != null && roomT != null) {
       const lag = t - roomT;
       const a = Math.abs(lag);
@@ -441,6 +517,7 @@ function pushMember() {
     ready: !!(player && player.ready),
     playing: !!(player && player.ready && !player.paused()),
     pos: player && player.ready ? player.time() : 0,
+    ls: player?.kind === "live" ? player.status : null,
     at: serverNow()
   }).catch(() => {});
 }
@@ -487,6 +564,7 @@ function leaveRoom(silent) {
   roomListeners.forEach(u => u()); roomListeners = [];
   clearInterval(memberTimer);
   if (memberRef) { set(memberRef, null).catch(() => {}); onDisconnect(memberRef).cancel(); memberRef = null; }
+  stopLive();
   player?.destroy(); player = null; curSrcKey = null; S = null; code = null;
   if (!silent) {
     $("#roomView").hidden = true; $("#lobby").hidden = false;
@@ -823,6 +901,23 @@ function useLocalFile(f) {
 }
 
 function wireUi2() {
+  $("#liveInput").addEventListener("change", () => {
+    const f = $("#liveInput").files[0]; $("#liveInput").value = "";
+    if (!f || !code) return;
+    const er = $("#srcErr");
+    if (!(HTMLMediaElement.prototype.captureStream || HTMLMediaElement.prototype.mozCaptureStream) || typeof RTCPeerConnection === "undefined") {
+      er.textContent = "Транслировать можно из Chrome или Edge на компьютере. Смотреть трансляцию — с любого устройства."; er.hidden = false; return;
+    }
+    er.hidden = true;
+    const sid = rid();
+    f.liveSid = sid; liveFile = f;
+    const probe = document.createElement("video"); probe.preload = "metadata";
+    const url = URL.createObjectURL(f);
+    const go = dur => { URL.revokeObjectURL(url); setSource({ type: "live", host: uid, sid, title: f.name.slice(0, 160), dur }); };
+    probe.onloadedmetadata = () => go(probe.duration || 0);
+    probe.onerror = () => go(0);
+    probe.src = url;
+  });
   const screen = $("#screen");
   ["dragenter", "dragover"].forEach(ev => screen.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.add("over"); }));
   ["dragleave", "drop"].forEach(ev => screen.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.remove("over"); }));

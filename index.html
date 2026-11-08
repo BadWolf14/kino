@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js" defer></script>
 </head>
 <body>
@@ -70,6 +70,8 @@
             <input type="search" id="srcInput" placeholder="Название или ссылка: RuTube, YouTube, .mp4, .m3u8" autocomplete="off" spellcheck="false">
             <button class="btn primary" type="submit" id="srcSubmit">Найти</button>
             <label class="btn" for="fileInput">Свой файл</label>
+            <label class="btn" for="liveInput" title="Видео есть только у вас — остальные увидят трансляцию">Транслировать файл</label>
+            <input type="file" id="liveInput" accept="video/*,.mkv" hidden>
             <input type="file" id="fileInput" accept="video/*,.mkv" hidden>
             <input type="file" id="libFile" accept=".framesearch,.json,application/json,text/plain" hidden>
           </form>
@@ -92,6 +94,7 @@
               <h3 id="dropTitle">Что смотрим?</h3>
               <p id="dropText">Вставьте ссылку сверху или выберите файл. Видео сразу появится у всех в комнате.</p>
               <label class="btn primary" for="fileInput" id="dropPick" hidden>Выбрать файл</label>
+              <label class="btn primary" for="liveInput" id="dropLive" hidden>Выбрать файл и продолжить</label>
             </div>
           </div>
           <div class="taphint" id="tapHint" hidden>Видео уже идёт у всех — нажмите ▶ в плеере, чтобы присоединиться</div>
@@ -124,8 +127,9 @@
   </section>
 </div>
 <div class="toast" id="toast" hidden></div>
-<script src="config.js?v=7"></script>
-<script src="youtube-key.js?v=7"></script>
-<script type="module" src="app.js?v=7"></script>
+<script src="config.js?v=8"></script>
+<script src="youtube-key.js?v=8"></script>
+<script src="ice-servers.js?v=8"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>
